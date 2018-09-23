@@ -2,63 +2,104 @@ package org.jeuvreyl.factorio.lua.loader
 
 import org.jeuvreyl.factorio.lua.models.*
 import org.luaj.vm2.LuaTable
+import org.luaj.vm2.LuaValue
 import org.luaj.vm2.lib.jse.JsePlatform
 import org.springframework.stereotype.Service
 import java.io.File
 
+fun LuaTable.getAsTable(name: String): LuaTable {
+    return this.get(name) as LuaTable
+}
+
+fun LuaTable.getAsTable(key: LuaValue): LuaTable {
+    return this.get(key) as LuaTable
+}
 
 @Service
-class DataLoader {
+class DataLoader(val baseLoader: BaseLoader, val modsLoader: ModsLoader) {
 
-    val urlCleanUp: Regex = "__\\w*__".toRegex()
-
-    val itemKeys = listOf("item", "item-with-inventory", "item-with-entity-data",
+    private val itemKeys = listOf("item", "item-with-inventory", "item-with-entity-data",
             "fluid", "capsule", "module", "ammo", "armor", "rail-planner",
             "mining-tool", "gun", "blueprint", "deconstruction-item", "repair-tool", "tool",
             "item-with-inventory")
 
-    fun loadData(baseDir: File): FactorioData? {
+    private val assemblingMachineKeys = listOf("assembling-machine", "rocket-silo")
 
-        val rawData = readLuaFiles(baseDir)
+    fun loadData(baseDir: File, modsDir: File): FactorioData {
+
+        val rawData = readLuaFiles(baseDir, modsDir)
 
         val groupByName = extractGroups(rawData)
-        val subGroupByName: Map<String, ItemSubGroup> = extractSubGroups(rawData, groupByName)
-        val itemByName: Map<String, Item> = extractItems(rawData, subGroupByName)
-        val recipeByName: Map<String, Recipe> = extractRecipes(rawData, itemByName, subGroupByName)
+        val subGroupByName = extractSubGroups(rawData, groupByName)
+        val itemByName = extractItems(rawData, subGroupByName)
+        val recipeByName = extractRecipes(rawData, itemByName, subGroupByName)
+        val assemblingMachineByName = extractAssemblingMachines(rawData)
 
-        return consolidateData(itemByName, recipeByName, groupByName)
+        return consolidateData(itemByName, recipeByName, groupByName, assemblingMachineByName)
     }
 
-    private fun extractGroups(rawData: LuaTable): Map<String, ItemGroup> {
-        val groupByName = HashMap<String, ItemGroup>()
-
-        val entitiesMap = rawData.get("item-group") as LuaTable
-        for (key in entitiesMap.keys()) {
-            val group = buildGroup(entitiesMap.get(key) as LuaTable)
-            groupByName[group.name] = group
-        }
-
-        return groupByName
-    }
-
-    private fun consolidateData(itemByName: Map<String, Item>, recipeByName: Map<String, Recipe>, groupByName: Map<String, ItemGroup>): FactorioData? {
+    private fun consolidateData(itemByName: Map<String, Item>,
+                                recipeByName: Map<String, Recipe>,
+                                groupByName: Map<String, ItemGroup>,
+                                assemblingMachineByName: Map<String, AssemblingMachine>): FactorioData {
         return FactorioData(
                 recipeByName = recipeByName,
                 itemByName = itemByName,
-                groupByName = groupByName
+                groupByName = groupByName,
+                assemblingMachineByName = assemblingMachineByName
         )
+    }
+
+    private fun buildAssemblingMachine(entity: LuaTable): AssemblingMachine {
+        val name = entity.get("name").toString()
+        val iconUrl = cleanIconUrl(extractIcons(entity))
+        val craftingSpeed = entity.get("crafting_speed").todouble()
+        val recipe = extractFixedRecipe(entity)
+        val subGroups = buildSubGroups(entity)
+        val ingredientCount = entity.get("ingredient_count").toint()
+
+        return AssemblingMachine(
+                name = name,
+                iconUrl = iconUrl,
+                craftingSpeed = craftingSpeed,
+                recipe = recipe,
+                subGroups = subGroups,
+                ingredientCount = ingredientCount
+        )
+    }
+
+    private fun extractFixedRecipe(entity: LuaTable): String? {
+        val fixedRecipe = entity.get("fixed_recipe")
+
+        if (fixedRecipe.isnil()) {
+            return null
+        }
+
+        return fixedRecipe.toString()
+    }
+
+    private fun buildSubGroups(entity: LuaTable): List<String> {
+        val subgroups = ArrayList<String>()
+
+        val entitiesMap = entity.getAsTable("crafting_categories")
+        for (key in entitiesMap.keys()) {
+            val subgroup = entitiesMap.get(key).toString()
+            subgroups.add(subgroup)
+        }
+
+        return subgroups
     }
 
     private fun buildGroup(entity: LuaTable): ItemGroup {
         val name = entity.get("name").toString()
-        val iconUrl = cleanIconUrl(extractItemIcon(entity))
+        val iconUrl = cleanIconUrl(extractIcons(entity))
 
         return ItemGroup(name = name, iconUrl = iconUrl)
     }
 
     private fun buildItem(entity: LuaTable, subGroupByName: Map<String, ItemSubGroup>): Item {
         val name = entity.get("name").toString()
-        val iconUrl = cleanIconUrl(extractItemIcon(entity))
+        val iconUrl = cleanIconUrl(extractIcons(entity))
         val orderKey = entity.get("order").toString()
         val subGroup = subGroupByName[extractSubGroup(entity)]
                 ?: throw NullPointerException("no subGroup found")
@@ -83,6 +124,27 @@ class DataLoader {
                 groupName = groupName)
     }
 
+    private fun extractAssemblingMachines(rawData: LuaTable): Map<String, AssemblingMachine> {
+        return assemblingMachineKeys.map { rawData.getAsTable(it) }
+                .flatMap { entitiesMap ->
+                    entitiesMap.keys()
+                            .map { buildAssemblingMachine(entitiesMap.getAsTable(it)) }
+                }
+                .associate { it.name to it }
+    }
+
+    private fun extractGroups(rawData: LuaTable): Map<String, ItemGroup> {
+        val groupByName = HashMap<String, ItemGroup>()
+
+        val entitiesMap = rawData.getAsTable("item-group")
+        for (key in entitiesMap.keys()) {
+            val group = buildGroup(entitiesMap.getAsTable(key))
+            groupByName[group.name] = group
+        }
+
+        return groupByName
+    }
+
     private fun extractGroupName(entity: LuaTable, itemByName: Map<String, Item>, subGroupByName: Map<String, ItemSubGroup>, results: List<UsableItem>): String {
         val subGroupName = entity.get("subgroup")
 
@@ -104,7 +166,7 @@ class DataLoader {
         return subGroup.name
     }
 
-    fun extractSubGroup(entity: LuaTable): String {
+    private fun extractSubGroup(entity: LuaTable): String {
         val subGroupName = entity.get("subgroup")
         if (subGroupName.isnil()) {
             return "other"
@@ -116,14 +178,15 @@ class DataLoader {
         val name = entity.get("name").toString()
         val group = groupByName[entity.get("group").toString()] ?: throw NullPointerException("no group found")
 
-        return ItemSubGroup(name = name, group = group)
+        return ItemSubGroup(name = name,
+                group = group)
     }
 
     private fun cleanIconUrl(url: String): String {
-        return url.replace(urlCleanUp, "")
+        return url.replace("__", "")
     }
 
-    private fun extractItemIcon(entity: LuaTable): String {
+    private fun extractIcons(entity: LuaTable): String {
         val icon = entity.get("icon")
 
         return if (icon.isnil()) {
@@ -138,9 +201,9 @@ class DataLoader {
     private fun extractSubGroups(rawData: LuaTable, groupByName: Map<String, ItemGroup>): Map<String, ItemSubGroup> {
         val itemSubGroupByName = HashMap<String, ItemSubGroup>()
 
-        val entitiesMap = rawData.get("item-subgroup") as LuaTable
+        val entitiesMap = rawData.getAsTable("item-subgroup")
         for (key in entitiesMap.keys()) {
-            val subGroup = buildSubGroup(entitiesMap.get(key) as LuaTable, groupByName)
+            val subGroup = buildSubGroup(entitiesMap.getAsTable(key), groupByName)
             itemSubGroupByName[subGroup.name] = subGroup
         }
 
@@ -150,9 +213,9 @@ class DataLoader {
     private fun extractRecipes(rawData: LuaTable, itemByName: Map<String, Item>, subGroupByName: Map<String, ItemSubGroup>): Map<String, Recipe> {
         val recipeByName = HashMap<String, Recipe>()
 
-        val entitiesMap = rawData.get("recipe") as LuaTable
+        val entitiesMap = rawData.getAsTable("recipe")
         for (key in entitiesMap.keys()) {
-            val recipe = buildRecipe(entitiesMap.get(key) as LuaTable, itemByName, subGroupByName)
+            val recipe = buildRecipe(entitiesMap.getAsTable(key), itemByName, subGroupByName)
             recipeByName[recipe.name] = recipe
         }
 
@@ -199,7 +262,6 @@ class DataLoader {
 
         if (!result.isnil()) {
             val resultCount = resultBase.get("result_count")
-
             val amount = if (resultCount.isnil()) {
                 1
             } else {
@@ -212,9 +274,9 @@ class DataLoader {
             ))
         }
 
-        val results = resultBase.get("results") as LuaTable
+        val results = resultBase.getAsTable("results")
         return results.keys()
-                .map { results.get(it) as LuaTable }
+                .map { results.getAsTable(it) }
                 .map {
                     buildUsableItem(it)
                 }
@@ -230,7 +292,7 @@ class DataLoader {
         } as LuaTable
 
         return entities.keys()
-                .map { entities.get(it) as LuaTable }
+                .map { entities.getAsTable(it) }
                 .map {
                     buildUsableItem(it)
                 }
@@ -274,27 +336,23 @@ class DataLoader {
     }
 
     private fun extractItems(rawData: LuaTable, subGroupByName: Map<String, ItemSubGroup>): Map<String, Item> {
-        return itemKeys.map { rawData.get(it) as LuaTable }
-                .flatMap { entitiesMap -> entitiesMap.keys().map { buildItem(entitiesMap.get(it) as LuaTable, subGroupByName) } }
+        return itemKeys.map { rawData.getAsTable(it) }
+                .flatMap { entitiesMap ->
+                    entitiesMap.keys()
+                            .map { buildItem(entitiesMap.getAsTable(it), subGroupByName) }
+                }
                 .associate { it.name to it }
     }
 
-    private fun readLuaFiles(baseDir: File): LuaTable {
-        val luaLib = File(baseDir, "data/core/lualib/?.lua")
-        val baseData = File(baseDir, "data/base/?.lua")
-        val packagePath = luaLib.absolutePath + ";" + baseData.absolutePath
-
+    private fun readLuaFiles(baseDir: File, modsDir: File): LuaTable {
         val context = JsePlatform.standardGlobals()
         DataLoader::class.java.getResourceAsStream("/lua/compat.lua")
                 .use { `in` -> context.load(`in`, "compat", "t", context).call() }
 
-        (context.get("package") as LuaTable).set("path", packagePath)
-        context.load("require 'dataloader'").call()
-        DataLoader::class.java.getResourceAsStream("/lua/setting.lua")
-                .use { `in` -> context.load(`in`, "setting", "t", context).call() }
-        context.load("require 'data'").call()
-        context.load("require 'data-updates'").call()
-        val data = context.get("data") as LuaTable
-        return data.get("raw") as LuaTable
+        modsLoader.loadLuaFiles(File(modsDir, "\\mods"), baseLoader.loadLuaFiles(baseDir, context))
+
+        val data = context.getAsTable("data")
+
+        return data.getAsTable("raw")
     }
 }

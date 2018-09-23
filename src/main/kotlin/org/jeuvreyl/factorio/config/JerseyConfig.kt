@@ -1,4 +1,4 @@
-package org.jeuvreyl.factorio.lua.config
+package org.jeuvreyl.factorio.config
 
 import org.glassfish.jersey.server.ResourceConfig
 import org.springframework.stereotype.Component
@@ -10,7 +10,7 @@ class JerseyConfig : ResourceConfig() {
     }
 
     private fun registerEndpoints() {
-        packages("org.jeuvreyl.factorio.lua.controller")
+        packages("org.jeuvreyl.factorio.controller")
     }
 
 }
