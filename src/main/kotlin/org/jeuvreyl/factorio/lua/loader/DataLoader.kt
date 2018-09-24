@@ -55,7 +55,7 @@ class DataLoader(val baseLoader: BaseLoader, val modsLoader: ModsLoader) {
         val iconUrl = cleanIconUrl(extractIcons(entity))
         val craftingSpeed = entity.get("crafting_speed").todouble()
         val recipe = extractFixedRecipe(entity)
-        val subGroups = buildSubGroups(entity)
+        val craftingCategories = buildCraftingCategories(entity)
         val ingredientCount = entity.get("ingredient_count").toint()
 
         return AssemblingMachine(
@@ -63,7 +63,7 @@ class DataLoader(val baseLoader: BaseLoader, val modsLoader: ModsLoader) {
                 iconUrl = iconUrl,
                 craftingSpeed = craftingSpeed,
                 recipe = recipe,
-                subGroups = subGroups,
+                craftingCategories = craftingCategories,
                 ingredientCount = ingredientCount
         )
     }
@@ -78,16 +78,11 @@ class DataLoader(val baseLoader: BaseLoader, val modsLoader: ModsLoader) {
         return fixedRecipe.toString()
     }
 
-    private fun buildSubGroups(entity: LuaTable): List<String> {
-        val subgroups = ArrayList<String>()
-
+    private fun buildCraftingCategories(entity: LuaTable): Set<String> {
         val entitiesMap = entity.getAsTable("crafting_categories")
-        for (key in entitiesMap.keys()) {
-            val subgroup = entitiesMap.get(key).toString()
-            subgroups.add(subgroup)
-        }
-
-        return subgroups
+        return entitiesMap.keys()
+                .map { entitiesMap.get(it).toString() }
+                .toSet()
     }
 
     private fun buildGroup(entity: LuaTable): ItemGroup {
@@ -116,12 +111,23 @@ class DataLoader(val baseLoader: BaseLoader, val modsLoader: ModsLoader) {
         val results = extractResults(entity)
         val iconUrl = extractIcon(entity, itemByName)
         val groupName = extractGroupName(entity, itemByName, subGroupByName, results)
+        val craftingCategory = extractCategory(entity)
 
         return Recipe(name = name,
                 ingredients = ingredients,
                 results = results,
                 iconUrl = iconUrl,
-                groupName = groupName)
+                groupName = groupName,
+                craftingCategory = craftingCategory)
+    }
+
+    private fun extractCategory(entity: LuaTable): String? {
+        val category = entity.get("category")
+        return if (category.isnil()) {
+            "crafting"
+        } else {
+            category.toString()
+        }
     }
 
     private fun extractAssemblingMachines(rawData: LuaTable): Map<String, AssemblingMachine> {

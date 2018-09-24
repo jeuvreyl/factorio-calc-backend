@@ -17,7 +17,8 @@ object IconLoader {
         setOf(
                 extractIconUrls(data.itemByName.values),
                 extractIconUrls(data.recipeByName.values),
-                extractIconUrls(data.groupByName.values)
+                extractIconUrls(data.groupByName.values),
+                extractIconUrls(data.assemblingMachineByName.values)
         ).flatten()
                 .map { it -> it to File(baseDir, "data/$it") }
                 .forEach { (url, file) ->
