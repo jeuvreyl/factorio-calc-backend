@@ -183,9 +183,12 @@ class DataLoader(val baseLoader: BaseLoader, val modsLoader: ModsLoader) {
     private fun buildSubGroup(entity: LuaTable, groupByName: Map<String, ItemGroup>): ItemSubGroup {
         val name = entity.get("name").toString()
         val group = groupByName[entity.get("group").toString()] ?: throw NullPointerException("no group found")
-
-        return ItemSubGroup(name = name,
+        val subGroup = ItemSubGroup(name = name,
                 group = group)
+        // add known subgroups to the selected group
+        group.subGroups.add(name)
+
+        return subGroup
     }
 
     private fun cleanIconUrl(url: String): String {
